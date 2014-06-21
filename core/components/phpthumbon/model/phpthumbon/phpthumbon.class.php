@@ -121,15 +121,15 @@ class phpThumbOn {
             //Очередь
             'queue' => $this->modx->getOption('phpthumbon.queue', $config, 0),
 
-			//Что будет возвращено, если произошла ошибка
-			'error_mode' => $this->modx->getOption('phpthumbon.error_mode', $config, 1),
-			
+            //Что будет возвращено, если произошла ошибка
+            'error_mode' => $this->modx->getOption('phpthumbon.error_mode', $config, 1),
+
             //Класс очереди
             'queueClassPath' => $this->modx->getOption('phpthumbon.queue_classpath', $config, rtrim($corePath,'/').'/queue/QueueThumb.class.php'),
 
-			//Где хранить уже сжатые noimage файлы 
-			'noimage_cache' => $this->modx->getOption('phpthumbon.noimage_cache', $config, rtrim($assetsUrl,'/').'/components/phpthumbon/cache/'),
-			
+            //Где хранить уже сжатые noimage файлы
+            'noimage_cache' => $this->modx->getOption('phpthumbon.noimage_cache', $config, rtrim($assetsUrl,'/').'/components/phpthumbon/cache/'),
+
             // картинки нет
             'noimage' => $this->modx->getOption('phpthumbon.noimage', $config, rtrim($assetsUrl,'/').'/components/phpthumbon/noimage.jpg'),
 
@@ -143,7 +143,7 @@ class phpThumbOn {
     }
 
     /** Полный массив с конфигом */
-	public function getConfig(){
+    public function getConfig(){
         return $this->_config;
     }
     /**
@@ -155,7 +155,7 @@ class phpThumbOn {
      */
     public function loadResizer($from, $to){
         $out = false;
-		$new = true;
+        $new = true;
         if (!$this->modx->loadClass('phpthumb',$this->modx->getOption('core_path').'model/phpthumb/',true,true)) {
             $this->modx->log(modX::LOG_LEVEL_ERROR,'[phpthumbon] Could not load phpthumb class');
             $this->_flag = false;
@@ -180,9 +180,9 @@ class phpThumbOn {
                 $this->modx->log(modX::LOG_LEVEL_ERROR,'[phpthumbon] Could not generate thumbnail '.$from);
             }
         }
-		if(!$out){
-			$out = $this->getErrorImage($from, $to);
-		}
+        if(!$out){
+            $out = $this->getErrorImage($from, $to);
+        }
         return $out;
     }
 
@@ -194,27 +194,27 @@ class phpThumbOn {
      * @return bool
      */
     protected function getErrorImage($from, $to){
-		$out = false;
-		$method = $this->_config['error_mode'];
-		switch($method){
-			case 2:{ /** Обработка оригинальной картинки */
-				if(copy($from, $to)){
-					chmod($to, octdec($this->_config['new_file_permissions']));
-					$out = $to;
-				}else{
-					$out = $from;
-				}
-				break;
-			}
-			case 1:
-			default:{ /** Обработка noimage картинки */
-				$noImg = $this->_config['noimage'];
-				$out = ($from != $noImg) ? $this->loadResizer($noImg, $to) : $noImg;
-				break;
-			}
-		}
-		return $out;
-	}
+        $out = false;
+        $method = $this->_config['error_mode'];
+        switch($method){
+            case 2:{ /** Обработка оригинальной картинки */
+                if(copy($from, $to)){
+                    chmod($to, octdec($this->_config['new_file_permissions']));
+                    $out = $to;
+                }else{
+                    $out = $from;
+                }
+                break;
+            }
+            case 1:
+            default:{ /** Обработка noimage картинки */
+                $noImg = $this->_config['noimage'];
+                $out = ($from != $noImg) ? $this->loadResizer($noImg, $to) : $noImg;
+                break;
+            }
+        }
+        return $out;
+    }
 
     /**
      * Получение значений из локального конфига
@@ -238,11 +238,13 @@ class phpThumbOn {
         if(!empty($this->_config['input'])){
             $path = $this->_config['input'];
             $path = preg_replace("#^/#","",$path);
-            if (strpos($path, ltrim(MODX_BASE_PATH,'/')) === false) {
+            if (!preg_match("/^http(s)?:\/\/\w+/",$path) && strpos($path, ltrim(MODX_BASE_PATH,'/')) === false) {
                 $this->_config['input'] = MODX_BASE_PATH . $path;
+            }else{
+                $this->_config['input'] = $path;
             }
         }
-		
+
         if(!isset($this->_config['ext']) || !self::ALLOWED_EXT($this->_config['ext'])){
             $this->_config['ext'] = self::DEFAULT_EXT;
             $flag = false;
@@ -327,6 +329,13 @@ class phpThumbOn {
     }
 
     /**
+     * Проверка на существование удаленного файла
+     */
+    private function _remote_file_exists($url){
+        return(bool)preg_match('~HTTP/1\.\d\s+200\s+OK~', @current(get_headers($url)));
+    }
+
+    /**
      * Проверяем имя и его существование.
      * Затем определяем папку в которую будут складываться превьюхи этого файла
      *
@@ -334,14 +343,17 @@ class phpThumbOn {
      * @return $this
      */
     public function relativeSrcPath(){
-        if(!(empty($this->_config['input']) || !is_scalar($this->_config['input']))
-            && !preg_match("/^http(s)?:\/\/\w+/",$this->_config['input'])
-            && file_exists($this->_config['input'])){
-            $full_assets = $this->_config['assetsPath'];
-            $assets = ltrim($this->_config['assetsUrl'],'/');
-            $imgDir = $this->_config['imagesFolder'];
-			
-            $this->_config['relativePath'] = preg_replace("#^({$full_assets}|(/)?{$assets})(/)?{$imgDir}(/)?|".MODX_BASE_PATH."#", '', $this->_pathinfo('dirname'));
+        if(!(empty($this->_config['input']) || !is_scalar($this->_config['input']))){
+            if (preg_match("/^http(s)?:\/\/\w+/",$this->_config['input']) && $this->_remote_file_exists($this->_config['input'])){
+                $this->_config['relativePath'] = "external_url";
+            }
+            elseif (file_exists($this->_config['input'])){
+                $full_assets = $this->_config['assetsPath'];
+                $assets = ltrim($this->_config['assetsUrl'],'/');
+                $imgDir = $this->_config['imagesFolder'];
+
+                $this->_config['relativePath'] = preg_replace("#^({$full_assets}|(/)?{$assets})(/)?{$imgDir}(/)?|".MODX_BASE_PATH."#", '', $this->_pathinfo('dirname'));
+            }
         }else{
             if($this->_flag = file_exists($this->_config['noimage'])){
                 $this->_config['input'] = $this->_config['noimage'];
@@ -522,29 +534,29 @@ class phpThumbOn {
     public function getThumb(){
         if($this->_flag){
             $out = $this->_config['_cacheFileName'];
-			$cacheNoImage = $this->_config['noimage_cache'] . $this->_config['_cacheSuffix'] . "." . $this->_config['_options']['f'];
+            $cacheNoImage = $this->_config['noimage_cache'] . $this->_config['_cacheSuffix'] . "." . $this->_config['_options']['f'];
 
             if($this->_config['input'] == $this->_config['noimage']){
-				$this->copyFile($cacheNoImage, $out);
-			}else{
-				if(file_exists($out) && filemtime($out) < filemtime($this->_config['input'])){
-					/** Удаляем существующие превьюхи этого файла */
-					$thumbFile = glob($this->_config['_globThumb'], GLOB_BRACE);
-					foreach($thumbFile as $tf){
-						unlink($tf);
-					}
-				}
-			}
-			
+                $this->copyFile($cacheNoImage, $out);
+            }else{
+                if(file_exists($out) && filemtime($out) < filemtime($this->_config['input'])){
+                    /** Удаляем существующие превьюхи этого файла */
+                    $thumbFile = glob($this->_config['_globThumb'], GLOB_BRACE);
+                    foreach($thumbFile as $tf){
+                        unlink($tf);
+                    }
+                }
+            }
+
             if(!file_exists($out)){
                 if($this->CheckQueue()){
                     $class = phpThumbOn::QueueClass;
                     $out = $class::add($this, $this->modx);
                 }else{
                     $out = $this->loadResizer($this->_config['input'], $out);
-					if($this->_config['input'] == $this->_config['noimage']){
-						$this->copyFile($out, $cacheNoImage);
-					}
+                    if($this->_config['input'] == $this->_config['noimage']){
+                        $this->copyFile($out, $cacheNoImage);
+                    }
                 }
             }
         }else{
@@ -567,13 +579,13 @@ class phpThumbOn {
      * @return bool статус копирования
      */
     protected function copyFile($from, $to){
-		$flag = false;
-		if(file_exists($from) && $this->makeDir(pathinfo($to, PATHINFO_DIRNAME)) && copy($from, $to)){
-			chmod($to, octdec($this->_config['new_file_permissions']));
-			$flag = true;
-		}
-		return $flag;
-	}
+        $flag = false;
+        if(file_exists($from) && $this->makeDir(pathinfo($to, PATHINFO_DIRNAME)) && copy($from, $to)){
+            chmod($to, octdec($this->_config['new_file_permissions']));
+            $flag = true;
+        }
+        return $flag;
+    }
 
     /**
      * Создание папки
