@@ -34,6 +34,9 @@ class phpThumbOn {
     /** @var array кеш со */
     private $_cacheDir = array();
 
+    /** @var array хранит данные (headers) об удаленном файле */
+    private $remoteFileData = array();
+
     /** @var null|modSnippet Сниппет для подготовки имени файла превьюхи*/
     public $snippetGetCacheName = null;
 
@@ -90,6 +93,9 @@ class phpThumbOn {
         $this->_cfg = $this->_config = array_merge(array(
             'input' => null,
             'options' => null,
+
+            //Проверка на локальный или удаленный файл
+            'localFile' => false,
 
             //путь к папке с компонента
             'corePath' => $corePath,
@@ -236,9 +242,11 @@ class phpThumbOn {
         $flag = true;
 
         if(!empty($this->_config['input'])){
-            $path = $this->_config['input'];
+            $path = html_entity_decode($this->_config['input']);
+
             $path = preg_replace("#^/#","",$path);
             if (!preg_match("/^http(s)?:\/\/\w+/",$path) && strpos($path, ltrim(MODX_BASE_PATH,'/')) === false) {
+                $this->_config['localFile'] = true;
                 $this->_config['input'] = MODX_BASE_PATH . $path;
             }else{
                 $this->_config['input'] = $path;
@@ -351,7 +359,6 @@ class phpThumbOn {
                 $full_assets = $this->_config['assetsPath'];
                 $assets = ltrim($this->_config['assetsUrl'],'/');
                 $imgDir = $this->_config['imagesFolder'];
-
                 $this->_config['relativePath'] = preg_replace("#^({$full_assets}|(/)?{$assets})(/)?{$imgDir}(/)?|".MODX_BASE_PATH."#", '', $this->_pathinfo('dirname'));
             }
         }else{
@@ -366,6 +373,72 @@ class phpThumbOn {
     }
 
     /**
+     * Удаляем из имени файла мусор
+     *
+     * @param string $string Any string with MODX tags
+     *
+     * @return string String with html entities
+     */
+    public function sanitizeFileName($str = '') {
+        // $str = 'https://www.ya. @ ru/1231.com';
+        $str = htmlentities(trim($str), ENT_QUOTES, "UTF-8");
+        $str = preg_replace('/^http(s)?:\/\/(www)?(\.)*/', '', $str);
+        $str = preg_replace('/\./', '_', $str);
+        $str = preg_replace('/\//', '_', $str);
+        $str = preg_replace("/[^A-Za-z0-9._]/", "", $str);
+        return $str;
+    }
+
+    private function _fileExt($contentType){
+        $map = array(
+            // 'application/pdf'   => '.pdf',
+            // 'application/zip'   => '.zip',
+            // 'text/css'          => '.css',
+            // 'text/html'         => '.html',
+            // 'text/javascript'   => '.js',
+            // 'text/plain'        => '.txt',
+            // 'text/xml'          => '.xml',
+            'image/gif'           => 'gif',
+            'image/jpeg'          => 'jpg',
+            'image/png'           => 'png',
+            'image/x-windows-bmp' => 'bmp',
+            'image/x-icon'        => 'ico',
+        );
+        if (isset($map[$contentType]))
+        {
+            return $map[$contentType];
+        }else{
+            return '';
+        }
+    }
+
+    /**
+     * так как родная функция pathinfo() с utf работает крайне криво
+     * то заменим ее на аналог
+     * @param  [type] $path_file [description]
+     * @return [type]       [description]
+     */
+    private function _pathinfoUTF($path_file){
+        $result=array();
+        // $url = "http://www.cyberforum.ru/newreply2.php?do=newreply&noquote=1&p=2901895";
+        // $url = "////www.cyberforum.ru/xx/bbb. _=x/ccc/newr _+= \eply.zz.2.php";
+        $path_file = "/".ltrim($path_file,"/");
+        $path_parse = parse_url($path_file);
+
+        preg_match("#[^/]*$#i", $path_parse['path'], $match);
+        preg_match("~[^/]+$~",$path_parse['path'],$file);
+        preg_match("~([^/]+)[.$]+(.*)~",$file[0],$file_ext);
+
+        $result['dirname'] = pathinfo($path_file, PATHINFO_DIRNAME);
+        $result['basename'] = $file_ext[0];
+        $result['filename'] = $file_ext[1]; // $match[0]
+        $result['extension'] = $file_ext[2];
+
+        return $result;
+    }
+
+
+    /**
      * Чтобы не дергать постоянно файл который обрабатываем
      *
      * @access private
@@ -374,7 +447,18 @@ class phpThumbOn {
      */
     private function _pathinfo($name){
         if(empty($this->_fileInfo)){
-            $this->_fileInfo = pathinfo($this->_config['input']);
+            // $this->_fileInfo = pathinfo($this->_config['input']);
+            $this->_fileInfo = $this->_pathinfoUTF($this->_config['input']);
+            // if (empty($this->_fileInfo['filename']) && !$this->_config['localFile']){
+            if (!$this->_config['localFile']){
+                // это значит что файл удаленный и нам нужно состряпать для него временное имячко
+                $this->_fileInfo['filename']=$this->sanitizeFileName($this->_config['input']);
+                // $this->modx->log(modX::LOG_LEVEL_ERROR,'[phpthumbon] pathinfo:'.print_r($this->_fileInfo,true));
+                // нужно получить расширение файла, может из header???
+                // $ext = $this->_pathinfo('extension');
+                $remoteFileData=$this->_remoteFileData($this->_config['input']);
+                $this->_fileInfo['extension'] = $this->_fileExt($remoteFileData['content-type']);
+            }
         }
         $out = is_scalar($name) && isset($this->_fileInfo[$name]) ? $this->_fileInfo[$name] : '';
         return $out;
@@ -468,6 +552,7 @@ class phpThumbOn {
      * @return $this
      */
     public function getCacheFileName(){
+
         if($this->_flag){
             $filename = $this->_pathinfo('filename');
 
@@ -490,6 +575,7 @@ class phpThumbOn {
 
                 //Кеш файл превьюхи
                 $this->_config['_cacheFileName'] = $cacheFileDir . "_". $this->_config['_cacheSuffix'] . "." . $this->_config['_options']['f'];
+                // $this->modx->log(modX::LOG_LEVEL_ERROR,'[phpthumbon] config:'.print_r($this->_config,true));
                 //}
             }else{
                 $this->snippetGetCacheName->_cacheable = false;
@@ -506,6 +592,7 @@ class phpThumbOn {
                 $this->_config['_globThumb'] = isset($out['_globThumb']) ? $out['_globThumb'] : '';
             }
         }
+// $this->modx->log(modX::LOG_LEVEL_ERROR,'[phpthumbon] CFN:'.$this->_config['_cacheFileName']);
         return $this;
     }
 
@@ -525,6 +612,25 @@ class phpThumbOn {
         return $flag;
     }
 
+    protected function _remoteFileData($f) {
+        if (!empty($this->remoteFileData)) return $this->remoteFileData;
+        // $this->modx->log(modX::LOG_LEVEL_ERROR,'[phpthumbon] FILE:'.$f);
+
+        $h = @get_headers($f, 1);
+        if (stristr($h[0], '200')) {
+            foreach($h as $k=>$v) {
+                $result[strtolower(trim($k))]=$v;
+                // if(strtolower(trim($k))=="last-modified") {
+                    // $this->modx->log(modX::LOG_LEVEL_ERROR,'[phpthumbon] FILE:'.$f);
+                    // $this->modx->log(modX::LOG_LEVEL_ERROR,'[phpthumbon] DATE:'.$v);    // Thu, 07 Mar 2013 19:58:24 GMT
+                    // return strtotime($v);
+                // }
+            }
+            $this->remoteFileData=$result;
+        }
+        return 0;
+    }
+
     /**
      * Пытаемся создать превьюху
      *
@@ -539,7 +645,17 @@ class phpThumbOn {
             if($this->_config['input'] == $this->_config['noimage']){
                 $this->copyFile($cacheNoImage, $out);
             }else{
-                if(file_exists($out) && filemtime($out) < filemtime($this->_config['input'])){
+                // if(file_exists($out) && filemtime($out) < filemtime($this->_config['input'])){
+                // т.к. мы не можем определить время файла на другом хосте через filemtime
+
+                /*if(!$this->_config['localFile'])
+                {
+                    $this->_remoteFileData($this->_config['input']);
+                }*/
+                // if((file_exists($out) && !$this->_config['localFile']) || ($this->_config['localFile'] && file_exists($out) && filemtime($out) < filemtime($this->_config['input']))){
+
+                // $remoteFileData=$this->_remoteFileData($this->_config['input']);
+                if((file_exists($out) && !$this->_config['localFile'] && filemtime($out) < strtotime($remoteFileData['last-modified']) && $remoteFileData=$this->_remoteFileData($this->_config['input']) ) || ($this->_config['localFile'] && file_exists($out) && filemtime($out) < filemtime($this->_config['input']))){
                     /** Удаляем существующие превьюхи этого файла */
                     $thumbFile = glob($this->_config['_globThumb'], GLOB_BRACE);
                     foreach($thumbFile as $tf){
